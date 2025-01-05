@@ -1,0 +1,293 @@
+package main
+
+import (
+	"context"
+	"flag"
+	"fmt"
+	"io/ioutil"
+	"os"
+	"os/signal"
+	"path/filepath"
+	"strings"
+	"syscall"
+	"time"
+
+	"github.com/briandowns/spinner"
+	"github.com/fatih/color"
+	"golang.org/x/crypto/ssh"
+	"gopkg.in/yaml.v3"
+)
+
+// InstallConfig represents the YAML configuration for installation
+type InstallConfig struct {
+	Username     string            `yaml:"username"`
+	PrivateKey   string            `yaml:"private_key_path"`
+	PreInstall   []string          `yaml:"pre_install_commands"`
+	Installation []string          `yaml:"installation_commands"`
+	PostInstall  []string          `yaml:"post_install_commands"`
+	Environment  map[string]string `yaml:"environment_variables"`
+}
+
+// Progress tracks installation progress
+type Progress struct {
+	totalSteps    int
+	currentStep   int
+	currentPhase  string
+	currentAction string
+}
+
+// NewProgress creates a new progress tracker
+func NewProgress(config *InstallConfig) *Progress {
+	total := len(config.PreInstall) + len(config.Installation) + len(config.PostInstall)
+	return &Progress{
+		totalSteps:    total,
+		currentStep:   0,
+		currentPhase:  "Initializing",
+		currentAction: "Starting installation",
+	}
+}
+
+func (p *Progress) update(phase, action string) {
+	p.currentStep++
+	p.currentPhase = phase
+	p.currentAction = action
+}
+
+func (p *Progress) getProgressBar() string {
+	width := 30
+	filled := int(float64(p.currentStep) / float64(p.totalSteps) * float64(width))
+	bar := strings.Repeat("█", filled) + strings.Repeat("░", width-filled)
+	percentage := int(float64(p.currentStep) / float64(p.totalSteps) * 100)
+	return fmt.Sprintf("[%s] %d%%", bar, percentage)
+}
+
+func main() {
+	// Set up context with cancellation
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	// Handle interrupt signals
+	sigChan := make(chan os.Signal, 1)
+	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
+	go func() {
+		<-sigChan
+		color.Yellow("\nReceived interrupt signal, gracefully shutting down...")
+		cancel()
+	}()
+
+	// Parse command line arguments
+	ipAddress := flag.String("ip", "", "Remote server IP address")
+	port := flag.Int("port", 22, "SSH port number")
+	configPath := flag.String("config", "", "Path to configuration YAML file")
+	flag.Parse()
+
+	if *ipAddress == "" || *configPath == "" {
+		color.Red("Both IP address and config path are required")
+		os.Exit(1)
+	}
+
+	// Create a fancy spinner with custom characters
+	s := spinner.New([]string{"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"}, 80*time.Millisecond)
+	s.Prefix = " "
+	s.Suffix = " Loading configuration..."
+	s.Color("cyan")
+	s.Start()
+
+	// Read and parse configuration file
+	config, err := loadConfig(*configPath)
+	if err != nil {
+		s.Stop()
+		color.Red("Failed to load config: %v", err)
+		os.Exit(1)
+	}
+	s.Stop()
+
+	// Initialize progress tracker
+	progress := NewProgress(config)
+
+	// Create header
+	color.New(color.FgHiCyan).Println("\n🚀 Installation Process Started")
+	fmt.Println(strings.Repeat("─", 50))
+
+	s.Suffix = " Establishing SSH connection..."
+	s.Start()
+	// Create SSH client
+	client, err := createSSHClient(*ipAddress, *port, config)
+	if err != nil {
+		s.Stop()
+		color.Red("Failed to create SSH client: %v", err)
+		os.Exit(1)
+	}
+	defer client.Close()
+	s.Stop()
+
+	// Monitor connection health in background
+	go func() {
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			default:
+				_, _, err := client.SendRequest("keepalive@golang.org", true, nil)
+				if err != nil {
+					color.Red("\nSSH connection lost: %v", err)
+					cancel()
+					return
+				}
+				time.Sleep(15 * time.Second)
+			}
+		}
+	}()
+
+	// Execute installation steps
+	if err := executeInstallation(ctx, client, config, progress, s); err != nil {
+		if ctx.Err() != nil {
+			color.Yellow("\n⚠️ Installation interrupted")
+		} else {
+			color.Red("\n❌ Installation failed: %v", err)
+		}
+		os.Exit(1)
+	}
+
+	// Final success message
+	color.New(color.FgHiGreen).Println("\n✨ Installation completed successfully!")
+	fmt.Println(strings.Repeat("─", 50))
+}
+
+func loadConfig(path string) (*InstallConfig, error) {
+	// Validate file extension
+	ext := strings.ToLower(filepath.Ext(path))
+	if ext != ".yml" && ext != ".yaml" {
+		return nil, fmt.Errorf("configuration file must have .yml or .yaml extension")
+	}
+
+	data, err := ioutil.ReadFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read config file: %v", err)
+	}
+
+	var config InstallConfig
+	if err := yaml.Unmarshal(data, &config); err != nil {
+		return nil, fmt.Errorf("failed to parse YAML config: %v", err)
+	}
+
+	// Validate required fields
+	if config.Username == "" {
+		return nil, fmt.Errorf("username is required in configuration")
+	}
+	if config.PrivateKey == "" {
+		return nil, fmt.Errorf("private_key_path is required in configuration")
+	}
+
+	return &config, nil
+}
+
+func createSSHClient(ip string, port int, config *InstallConfig) (*ssh.Client, error) {
+	// Read private key
+	key, err := ioutil.ReadFile(config.PrivateKey)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read private key: %v", err)
+	}
+
+	// Parse private key
+	signer, err := ssh.ParsePrivateKey(key)
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse private key: %v", err)
+	}
+
+	// Configure SSH client
+	sshConfig := &ssh.ClientConfig{
+		User: config.Username,
+		Auth: []ssh.AuthMethod{
+			ssh.PublicKeys(signer),
+		},
+		HostKeyCallback: ssh.InsecureIgnoreHostKey(),
+		BannerCallback: func(message string) error {
+			color.Cyan("SSH Banner: %s", message)
+			return nil
+		},
+		Timeout: 30 * time.Second,
+	}
+
+	color.Yellow("🔑 Connecting to %s:%d as %s", ip, port, config.Username)
+
+	// Connect to remote server
+	client, err := ssh.Dial("tcp", fmt.Sprintf("%s:%d", ip, port), sshConfig)
+	if err != nil {
+		return nil, fmt.Errorf("failed to connect to remote server: %v", err)
+	}
+
+	return client, nil
+}
+
+func executeInstallation(ctx context.Context, client *ssh.Client, config *InstallConfig, progress *Progress, s *spinner.Spinner) error {
+	for _, phase := range []struct {
+		name     string
+		commands []string
+	}{
+		{"Pre-installation", config.PreInstall},
+		{"Installation", config.Installation},
+		{"Post-installation", config.PostInstall},
+	} {
+		if len(phase.commands) == 0 {
+			continue
+		}
+
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		default:
+		}
+
+		color.New(color.FgHiMagenta).Printf("\n📦 %s Phase\n", phase.name)
+		fmt.Println(strings.Repeat("─", 30))
+
+		for _, cmd := range phase.commands {
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			default:
+			}
+
+			session, err := client.NewSession()
+			if err != nil {
+				return fmt.Errorf("failed to create session: %v", err)
+			}
+			defer session.Close()
+
+			// Build command with environment variables
+			execCmd := cmd
+			if len(config.Environment) > 0 {
+				envStrings := make([]string, 0, len(config.Environment))
+				for key, value := range config.Environment {
+					envStrings = append(envStrings, fmt.Sprintf("%s=%s", key, value))
+				}
+				execCmd = fmt.Sprintf("export %s && %s", strings.Join(envStrings, " "), cmd)
+			}
+
+			// Update progress
+			progress.update(phase.name, cmd)
+
+			// Display progress
+			fmt.Printf("\n🔄 Running command: %s\n", execCmd)
+			fmt.Printf("Progress: %s\n", progress.getProgressBar())
+
+			s.Suffix = fmt.Sprintf(" Executing: %s", cmd)
+			s.Start()
+
+			output, err := session.CombinedOutput(execCmd)
+			s.Stop()
+
+			if err != nil {
+				return fmt.Errorf("command '%s' failed: %v\nOutput: %s", execCmd, err, output)
+			}
+
+			color.Green("✅ Command completed successfully")
+			if len(output) > 0 {
+				fmt.Printf("📝 Output:\n%s\n", output)
+			}
+		}
+	}
+
+	return nil
+}
