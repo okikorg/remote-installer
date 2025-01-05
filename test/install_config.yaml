@@ -1,9 +1,0 @@
-username: <username>
-private_key_path: <path-to-ssh-key>
-pre_install_commands:
-  - <commands>
-installation_commands:
-  - <commands>
-post_install_commands:
-  - <commands>
-environment_variables: <env variables>
