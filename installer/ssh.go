@@ -15,7 +15,7 @@ type SSHClient struct {
 }
 
 // NewSSHClient creates a new SSH client connection
-func NewSSHClient(ip string, port int, config *Config) (*SSHClient, error) {
+func NewSSHClient(ip string, port int, username string, config *Config) (*SSHClient, error) {
 	key, err := ioutil.ReadFile(config.PrivateKey)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read private key: %v", err)
@@ -27,7 +27,7 @@ func NewSSHClient(ip string, port int, config *Config) (*SSHClient, error) {
 	}
 
 	sshConfig := &ssh.ClientConfig{
-		User: config.Username,
+		User: username,
 		Auth: []ssh.AuthMethod{
 			ssh.PublicKeys(signer),
 		},
