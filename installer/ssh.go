@@ -2,7 +2,7 @@ package installer
 
 import (
 	"fmt"
-	"io/ioutil"
+	"os"
 	"time"
 
 	"golang.org/x/crypto/ssh"
@@ -16,7 +16,7 @@ type SSHClient struct {
 
 // NewSSHClient creates a new SSH client connection
 func NewSSHClient(ip string, port int, username string, config *Config) (*SSHClient, error) {
-	key, err := ioutil.ReadFile(config.PrivateKey)
+	key, err := os.ReadFile(config.PrivateKey)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read private key: %v", err)
 	}

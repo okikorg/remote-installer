@@ -2,7 +2,7 @@ package installer
 
 import (
 	"fmt"
-	"io/ioutil"
+	"os"
 	"path/filepath"
 	"strings"
 
@@ -25,7 +25,7 @@ func LoadConfig(path string) (*Config, error) {
 		return nil, fmt.Errorf("configuration file must have .yml or .yaml extension")
 	}
 
-	data, err := ioutil.ReadFile(path)
+	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read config file: %v", err)
 	}
