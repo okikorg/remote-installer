@@ -13,7 +13,6 @@ go get github.com/okikorg/remote-installer
 1. Create a configuration file (`config.yml`):
 
 ```yaml
-username: "ubuntu"
 private_key_path: "~/.ssh/id_rsa"
 
 pre_install_commands:
@@ -46,13 +45,13 @@ import (
 
 func main() {
     // Load configuration
-    config, err := installer.LoadConfig("config.yml")
+    config, err := installer.LoadConfig("config.yaml")
     if err != nil {
         log.Fatal(err)
     }
 
     // Create installer
-    inst, err := installer.NewInstaller("192.168.1.100", 22, config)
+    inst, err := installer.NewInstaller("192.168.1.100", 22, "root", config)
     if err != nil {
         log.Fatal(err)
     }
@@ -86,7 +85,6 @@ func main() {
 
 The YAML configuration file supports the following options:
 
-- `username`: SSH username for the remote server
 - `private_key_path`: Path to SSH private key
 - `pre_install_commands`: Commands to run before main installation
 - `installation_commands`: Main installation commands

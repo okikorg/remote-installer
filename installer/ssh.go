@@ -23,6 +23,10 @@ func NewSSHClient(ip string, port int, username string, config *Config) (*SSHCli
 
 	signer, err := ssh.ParsePrivateKey(key)
 	if err != nil {
+		if err.Error() == "ssh: no key found" {
+			// If the error is "no key found", the private key might be in the wrong format
+			return nil, fmt.Errorf("invalid private key format. Please ensure you're using a valid SSH private key (RSA, ED25519, etc)")
+		}
 		return nil, fmt.Errorf("failed to parse private key: %v", err)
 	}
 
