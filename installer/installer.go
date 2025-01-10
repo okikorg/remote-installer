@@ -48,16 +48,21 @@ func (i *Installer) Install(ctx context.Context) error {
 			default:
 				i.progress.Update(phase.name, cmd)
 				output, err := i.client.ExecuteCommand(ctx, cmd)
-				if err != nil {
-					i.progress.Error(err)
-					return fmt.Errorf("phase '%s' command '%s' failed: %v", phase.name, cmd, err)
+
+				// Always show output in debug mode
+				if i.config.Debug && len(output.Output) > 0 {
+					fmt.Printf("\n📝 Command '%s' output:\n%s\n", cmd, output.Output)
 				}
 
-				if len(output.Output) > 0 {
-					// Only print output if debug is enabled or there's an error
-					if i.config.Debug {
-						fmt.Printf("\n📝 Command '%s' output:\n%s\n", cmd, output.Output)
+				// Check both the error and the exit code
+				if err != nil || output.ExitCode != 0 {
+					errMsg := fmt.Sprintf("phase '%s' command '%s' failed (exit code: %d)",
+						phase.name, cmd, output.ExitCode)
+					if len(output.Output) > 0 {
+						errMsg += fmt.Sprintf("\nOutput: %s", output.Output)
 					}
+					i.progress.Error(fmt.Errorf(errMsg))
+					return fmt.Errorf(errMsg)
 				}
 			}
 		}
