@@ -26,8 +26,10 @@ func NewInstaller(ip string, port int, username string, config *Config) (*Instal
 	}, nil
 }
 
-// Install executes the full installation process
+// Install runs the installation process
 func (i *Installer) Install(ctx context.Context) error {
+	defer i.progress.Stop()
+
 	phases := []struct {
 		name     string
 		commands []string
@@ -38,29 +40,30 @@ func (i *Installer) Install(ctx context.Context) error {
 	}
 
 	for _, phase := range phases {
-		if len(phase.commands) == 0 {
-			continue
-		}
-
 		for _, cmd := range phase.commands {
 			select {
 			case <-ctx.Done():
+				i.progress.Error(ctx.Err())
 				return ctx.Err()
 			default:
-			}
+				i.progress.Update(phase.name, cmd)
+				output, err := i.client.ExecuteCommand(ctx, cmd)
+				if err != nil {
+					i.progress.Error(err)
+					return fmt.Errorf("phase '%s' command '%s' failed: %v", phase.name, cmd, err)
+				}
 
-			i.progress.Update(phase.name, cmd)
-			output, err := i.client.ExecuteCommand(ctx, cmd)
-			if err != nil {
-				return fmt.Errorf("phase '%s' command '%s' failed: %v", phase.name, cmd, err)
-			}
-
-			if len(output.Output) > 0 {
-				fmt.Printf("Command '%s' output:\n%s\n", cmd, output.Output)
+				if len(output.Output) > 0 {
+					// Only print output if debug is enabled or there's an error
+					if i.config.Debug {
+						fmt.Printf("\n📝 Command '%s' output:\n%s\n", cmd, output.Output)
+					}
+				}
 			}
 		}
 	}
 
+	i.progress.Success()
 	return nil
 }
 

@@ -16,6 +16,7 @@ type Config struct {
 	Installation []string          `yaml:"installation_commands"`
 	PostInstall  []string          `yaml:"post_install_commands"`
 	Environment  map[string]string `yaml:"environment_variables"`
+	Debug        bool              `yaml:"debug"`
 }
 
 // LoadConfig loads and validates the installation configuration from a YAML file
