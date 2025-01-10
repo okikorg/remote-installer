@@ -49,5 +49,3 @@ func NewSSHClient(ip string, port int, username string, config *Config) (*SSHCli
 		config: config,
 	}, nil
 }
-
-_ = go get github.com/briandowns/spinner
